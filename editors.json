@@ -1,4 +1,13 @@
 {
  "v": 1,
- "editors": []
+ "editors": [
+  {
+   "id": "hq3M8sO5",
+   "n": "테스트 관리자",
+   "at": "2026-10-22",
+   "adm": 1,
+   "iv": "OvAdhPRi7X73Zsgl",
+   "ct": "zCgYjKgg8WcsPEuqymQVs8+xqThTvUu/BaZC5oLxQhljxq52A8oYr0FARt5xVnFpO18HeMq5C3z7DpwrJuKcdziYH5VJQEhhfr4dfeGIqwRxiqW2siCpXRJ1blX2G8CrXIphNEFP4HHiEMEzTQ=="
+  }
+ ]
 }
