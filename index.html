@@ -937,8 +937,16 @@ async function aesKey(secret,use){var raw=await crypto.subtle.digest("SHA-256",n
 async function tryDec(secret,e){try{var k=await aesKey(secret,"decrypt"); var pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:fromB64(e.iv)},k,fromB64(e.ct)); return new TextDecoder().decode(pt);}catch(_){return null;}}
 async function findMe(list){var s=ls(KK); if(!s) return null; for(var i=0;i<list.length;i++){var t=await tryDec(s,list[i]); if(t) return {e:list[i],tok:t};} return null;}
 async function loadEditors(){
-  try{var r=await fetch("editors.json?_="+Date.now(),{cache:"no-store"}); EDS=r.ok?((await r.json()).editors||[]):[];}catch(_){EDS=[];}
-  var m=await findMe(EDS); ME=m?{id:m.e.id,n:m.e.n}:null; render();
+  var okLoad=false;
+  try{var r=await fetch("editors.json?_="+Date.now(),{cache:"no-store"}); EDS=r.ok?((await r.json()).editors||[]):[]; okLoad=r.ok||r.status===404;}catch(_){EDS=[];}
+  var m=await findMe(EDS);
+  if(m&&m.e.adm){
+    try{localStorage.setItem(TK,m.tok); localStorage.setItem("ondash_admin_via",m.e.id); localStorage.removeItem(KK); if(!ls(NK)) localStorage.setItem(NK,String(m.e.n).replace(/\s*\(.*\)\s*$/,""));}catch(_){}
+    m=null;
+  }
+  var av=ls("ondash_admin_via");
+  if(okLoad&&av&&!EDS.some(function(x){return x.id===av&&x.adm;})){try{localStorage.removeItem(TK); localStorage.removeItem("ondash_admin_via");}catch(_){}}
+  ME=m?{id:m.e.id,n:m.e.n}:null; render();
 }
 async function keyToken(){var m=await findMe(EDS); return m?m.tok:null;}
 async function getTok(){return ls(TK)||await keyToken();}
@@ -1039,22 +1047,22 @@ function secEd(){
   if(!isAdmin()) return '<div class="empty">관리자만 볼 수 있습니다.</div>';
   var L=adminLinks();
   var h='<h4>편집자 (사람별 편집 링크)</h4><p class="hint">이름을 넣고 추가하면 그 사람 전용 편집 링크가 만들어집니다. 링크를 받은 사람만 저장할 수 있고, 수정 기록에 그 이름이 자동으로 남습니다. ‘권한 끄기’를 누르면 그 사람은 더 이상 저장할 수 없습니다. 보기는 누구나 기본 주소로 가능합니다.</p>'
-   +'<div class="ed-flt"><input id="edNewName" placeholder="이름 (예: 홍길동 · 대홍전기)"><button type="button" class="add" style="margin:0" data-edx="addEditor">+ 편집자 추가</button></div>';
+   +'<div class="ed-flt"><input id="edNewName" placeholder="이름 (예: 홍길동 · 대홍전기)"><button type="button" class="add" style="margin:0" data-edx="addEditor">+ 편집자 추가</button><button type="button" class="add" style="margin:0" data-edx="addAdmin" title="내 다른 브라우저(크롬 등)를 관리자로 만드는 링크">+ 관리자 링크</button></div><p class="hint">‘관리자 링크’는 본인의 다른 브라우저(크롬, 다른 PC)용입니다. 그 브라우저에서 한 번 열면 편집자 관리까지 할 수 있어요. 절대 다른 사람에게 주지 마세요.</p>';
   if(!EDS.length) h+='<div class="empty">아직 등록된 편집자가 없습니다.</div>';
   EDS.forEach(function(e){
     var lk=L[e.id];
-    h+='<div class="ed-it"><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><b style="margin-right:auto;font-size:13px">'+esc(e.n)+'</b><span class="hint" style="margin:0">추가 '+esc(e.at||"")+'</span>'
+    h+='<div class="ed-it"><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><b style="margin-right:auto;font-size:13px">'+esc(e.n)+(e.adm?' <span class="own o-a" style="font-size:11px">관리자</span>':'')+'</b><span class="hint" style="margin:0">추가 '+esc(e.at||"")+'</span>'
      +(lk?'<button type="button" class="btn" data-copy="'+esc(lk)+'">링크 복사</button>':'')
      +'<button type="button" class="btn" data-rekey="'+esc(e.id)+'">새 링크 발급</button><button type="button" class="del" data-revoke="'+esc(e.id)+'">권한 끄기</button></div>'
      +(lk?'<input readonly value="'+esc(lk)+'" style="margin-top:5px">':'<p class="hint" style="margin:5px 0 0">이 브라우저에는 링크가 저장돼 있지 않아요. 필요하면 ‘새 링크 발급’을 누르세요 (기존 링크는 막힘).</p>')+'</div>';
   });
   return h;
 }
-async function makeEntry(name,id){
+async function makeEntry(name,id,adm){
   var tok=ls(TK), secret=b64url(crypto.getRandomValues(new Uint8Array(18)));
   var k=await aesKey(secret,"encrypt"), iv=crypto.getRandomValues(new Uint8Array(12));
   var ct=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv:iv},k,new TextEncoder().encode(tok)));
-  return {e:{id:id||b64url(crypto.getRandomValues(new Uint8Array(6))),n:name,at:todayS(),iv:toB64(iv),ct:toB64(ct)},link:location.origin+location.pathname+"#edit="+secret};
+  return {e:{id:id||b64url(crypto.getRandomValues(new Uint8Array(6))),n:name,at:todayS(),adm:adm?1:0,iv:toB64(iv),ct:toB64(ct)},link:location.origin+location.pathname+"#edit="+secret};
 }
 async function saveEditors(list,msg){
   var h={"Accept":"application/vnd.github+json","Authorization":"Bearer "+ls(TK)};
@@ -1071,14 +1079,14 @@ async function edAdmin(act,arg){
     var L=adminLinks();
     if(act==="add"){
       var nm=($("edNewName").value||"").trim(); if(!nm){edSay("이름을 입력해 주세요.","err"); return;}
-      edSay("링크 만드는 중…"); var r=await makeEntry(nm);
+      edSay("링크 만드는 중…"); var r=await makeEntry(nm,null,arg==="adm");
       await saveEditors(EDS.concat([r.e]),"편집자 추가 · "+nm); L[r.e.id]=r.link;
       try{localStorage.setItem(LK,JSON.stringify(L));}catch(_){}
       edBody(); edSay("‘"+nm+"’ 편집 링크를 만들었어요. ‘링크 복사’로 전달하세요. 1~2분 뒤부터 작동합니다.","ok");
     } else if(act==="rekey"){
       var old=EDS.filter(function(x){return x.id===arg;})[0]; if(!old) return;
       if(!confirm("‘"+old.n+"’의 링크를 새로 만들까요? 기존 링크는 더 이상 저장할 수 없게 됩니다.")) return;
-      edSay("새 링크 만드는 중…"); var r2=await makeEntry(old.n,old.id);
+      edSay("새 링크 만드는 중…"); var r2=await makeEntry(old.n,old.id,old.adm);
       await saveEditors(EDS.map(function(x){return x.id===arg?r2.e:x;}),"편집 링크 재발급 · "+old.n); L[arg]=r2.link;
       try{localStorage.setItem(LK,JSON.stringify(L));}catch(_){}
       edBody(); edSay("‘"+old.n+"’ 새 링크를 만들었어요.","ok");
@@ -1195,6 +1203,7 @@ $("ed").addEventListener("click",function(e){
   if(x==="save"){save(); return;}
   if(x==="token"){askToken(); return;}
   if(x==="addEditor"){edAdmin("add"); return;}
+  if(x==="addAdmin"){if(!($("edNewName").value||"").trim()) $("edNewName").value=(ls(NK)||"관리자")+" (크롬)"; edAdmin("add","adm"); return;}
   if(b.dataset.rekey){edAdmin("rekey",b.dataset.rekey); return;}
   if(b.dataset.revoke){edAdmin("revoke",b.dataset.revoke); return;}
   if(b.dataset.copy){var cv=b.dataset.copy; (navigator.clipboard?navigator.clipboard.writeText(cv):Promise.reject()).then(function(){edSay("링크를 복사했어요.","ok");},function(){var ip=b.closest(".ed-it").querySelector("input"); if(ip){ip.select();} edSay("링크를 선택했어요. Ctrl+C로 복사하세요.");}); return;}
