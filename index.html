@@ -299,6 +299,7 @@ body.editing .app{margin-right:min(760px,100vw)}
 .ed-g td{padding:2px 3px; vertical-align:top; white-space:normal}
 .ed-g td.x{width:28px}
 .ed-b .del{padding:2px 7px; color:var(--bad)}
+.ed-b .btn{font:inherit; font-size:12px; border:1px solid var(--panel-line); background:var(--panel); color:var(--ink); padding:3px 9px; border-radius:2px; cursor:pointer}
 .ed-b .add{border-style:dashed; color:var(--teal-text); margin:2px 0 6px}
 .ed-it{border:1px solid var(--panel-line); border-left:3px solid var(--panel-line); border-radius:2px; padding:6px 8px; margin-bottom:6px; background:var(--row-a)}
 .ed-it.k{border-left-color:var(--teal)} .ed-it.risk{border-left-color:var(--bad)}
@@ -924,17 +925,22 @@ function fmtLocal(iso){var d=new Date(iso); if(isNaN(d)) return ""; var p=functi
 
 /* ---------- editor ---------- */
 var REPO="on-dashboard/on-dashboard.github.io", API="https://api.github.com/repos/"+REPO+"/contents/data.json", TK="ondash_gh_token", CK="ondash_cache", KK="ondash_edit_key", NK="ondash_name";
-var EDK={iv:"s3E9OgEfZ1Tg1jVp",ct:"N/SAhb88s9OTOrTrKTDA5qlPWUBV3y10z6f56MMT3aBCnKUG+c2rz25oNgy8gdHxxWCUh0xaJMIb1Fi9fpW7Co1y/lbazUz4WjDC7tNCM5tjTvuNho1cmY5qE9oIl96x0sdOQJqZdikQ24iHHw=="}; /*EDK*/
+/* per-person edit links: editors.json holds one encrypted copy of the save token per person */
+var EAPI="https://api.github.com/repos/"+REPO+"/contents/editors.json", LK="ondash_admin_links", EDS=[], ME=null;
 function ls(k){try{return localStorage.getItem(k);}catch(_){return null;}}
-function canEdit(){return !!(ls(TK)||(ls(KK)&&EDK));}
+function isAdmin(){return !!ls(TK);}
+function canEdit(){return !!(ls(TK)||ME);}
 function fromB64(s){var b=atob(s), u=new Uint8Array(b.length); for(var i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return u;}
-async function keyToken(){
-  var k=ls(KK); if(!k||!EDK) return null;
-  try{var raw=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(k));
-    var key=await crypto.subtle.importKey("raw",raw,"AES-GCM",false,["decrypt"]);
-    var pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:fromB64(EDK.iv)},key,fromB64(EDK.ct));
-    return new TextDecoder().decode(pt);}catch(_){return null;}
+function toB64(u){var b=""; for(var i=0;i<u.length;i++) b+=String.fromCharCode(u[i]); return btoa(b);}
+function b64url(u){return toB64(u).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
+async function aesKey(secret,use){var raw=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(secret)); return crypto.subtle.importKey("raw",raw,"AES-GCM",false,[use]);}
+async function tryDec(secret,e){try{var k=await aesKey(secret,"decrypt"); var pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:fromB64(e.iv)},k,fromB64(e.ct)); return new TextDecoder().decode(pt);}catch(_){return null;}}
+async function findMe(list){var s=ls(KK); if(!s) return null; for(var i=0;i<list.length;i++){var t=await tryDec(s,list[i]); if(t) return {e:list[i],tok:t};} return null;}
+async function loadEditors(){
+  try{var r=await fetch("editors.json?_="+Date.now(),{cache:"no-store"}); EDS=r.ok?((await r.json()).editors||[]):[];}catch(_){EDS=[];}
+  var m=await findMe(EDS); ME=m?{id:m.e.id,n:m.e.n}:null; render();
 }
+async function keyToken(){var m=await findMe(EDS); return m?m.tok:null;}
 async function getTok(){return ls(TK)||await keyToken();}
 var ED={sec:"bn",dirty:false,sha:null,q:"",fs:"",fo:""};
 var KIND=[["good","초록 · 완료"],["mid","청록 · 진행"],["bad","빨강 · 위험"],["off","회색 · 대기"]];
@@ -1028,18 +1034,76 @@ function secPr(){
    +'<p class="hint">이번 주 자재</p>'+grid("daily.mats",[{k:"0",h:"품목"},{k:"1",h:"일정"},{k:"2",h:"내용"}],["","",""])
    +'<h4>검사 · 서류</h4>'+grid("ins",[{k:"0",h:"구분"},{k:"1",h:"일정",w:"90px"},{k:"2",h:"색",t:"sel",o:KIND,w:"110px"},{k:"3",h:"상태",w:"70px"},{k:"4",h:"비고"}],["","","off","대기",""],600);
 }
-var SECF={bn:secBn,it:secIt,sh:secSh,inv:secInv,pr:secPr};
+function adminLinks(){try{return JSON.parse(ls(LK)||"{}");}catch(_){return {};}}
+function secEd(){
+  if(!isAdmin()) return '<div class="empty">관리자만 볼 수 있습니다.</div>';
+  var L=adminLinks();
+  var h='<h4>편집자 (사람별 편집 링크)</h4><p class="hint">이름을 넣고 추가하면 그 사람 전용 편집 링크가 만들어집니다. 링크를 받은 사람만 저장할 수 있고, 수정 기록에 그 이름이 자동으로 남습니다. ‘권한 끄기’를 누르면 그 사람은 더 이상 저장할 수 없습니다. 보기는 누구나 기본 주소로 가능합니다.</p>'
+   +'<div class="ed-flt"><input id="edNewName" placeholder="이름 (예: 홍길동 · 대홍전기)"><button type="button" class="add" style="margin:0" data-edx="addEditor">+ 편집자 추가</button></div>';
+  if(!EDS.length) h+='<div class="empty">아직 등록된 편집자가 없습니다.</div>';
+  EDS.forEach(function(e){
+    var lk=L[e.id];
+    h+='<div class="ed-it"><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><b style="margin-right:auto;font-size:13px">'+esc(e.n)+'</b><span class="hint" style="margin:0">추가 '+esc(e.at||"")+'</span>'
+     +(lk?'<button type="button" class="btn" data-copy="'+esc(lk)+'">링크 복사</button>':'')
+     +'<button type="button" class="btn" data-rekey="'+esc(e.id)+'">새 링크 발급</button><button type="button" class="del" data-revoke="'+esc(e.id)+'">권한 끄기</button></div>'
+     +(lk?'<input readonly value="'+esc(lk)+'" style="margin-top:5px">':'<p class="hint" style="margin:5px 0 0">이 브라우저에는 링크가 저장돼 있지 않아요. 필요하면 ‘새 링크 발급’을 누르세요 (기존 링크는 막힘).</p>')+'</div>';
+  });
+  return h;
+}
+async function makeEntry(name,id){
+  var tok=ls(TK), secret=b64url(crypto.getRandomValues(new Uint8Array(18)));
+  var k=await aesKey(secret,"encrypt"), iv=crypto.getRandomValues(new Uint8Array(12));
+  var ct=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv:iv},k,new TextEncoder().encode(tok)));
+  return {e:{id:id||b64url(crypto.getRandomValues(new Uint8Array(6))),n:name,at:todayS(),iv:toB64(iv),ct:toB64(ct)},link:location.origin+location.pathname+"#edit="+secret};
+}
+async function saveEditors(list,msg){
+  var h={"Accept":"application/vnd.github+json","Authorization":"Bearer "+ls(TK)};
+  var g=await fetch(EAPI+"?ref=main&_="+Date.now(),{headers:h,cache:"no-store"}), sha=null;
+  if(g.ok) sha=(await g.json()).sha; else if(g.status!==404) throw new Error("GitHub 확인 실패 ("+g.status+")");
+  var body={message:msg,content:b64(JSON.stringify({v:1,editors:list},null,1)),branch:"main"}; if(sha) body.sha=sha;
+  h["Content-Type"]="application/json";
+  var w=await fetch(EAPI,{method:"PUT",headers:h,body:JSON.stringify(body)});
+  if(!w.ok) throw new Error("저장 실패 ("+w.status+")");
+  EDS=list;
+}
+async function edAdmin(act,arg){
+  try{
+    var L=adminLinks();
+    if(act==="add"){
+      var nm=($("edNewName").value||"").trim(); if(!nm){edSay("이름을 입력해 주세요.","err"); return;}
+      edSay("링크 만드는 중…"); var r=await makeEntry(nm);
+      await saveEditors(EDS.concat([r.e]),"편집자 추가 · "+nm); L[r.e.id]=r.link;
+      try{localStorage.setItem(LK,JSON.stringify(L));}catch(_){}
+      edBody(); edSay("‘"+nm+"’ 편집 링크를 만들었어요. ‘링크 복사’로 전달하세요. 1~2분 뒤부터 작동합니다.","ok");
+    } else if(act==="rekey"){
+      var old=EDS.filter(function(x){return x.id===arg;})[0]; if(!old) return;
+      if(!confirm("‘"+old.n+"’의 링크를 새로 만들까요? 기존 링크는 더 이상 저장할 수 없게 됩니다.")) return;
+      edSay("새 링크 만드는 중…"); var r2=await makeEntry(old.n,old.id);
+      await saveEditors(EDS.map(function(x){return x.id===arg?r2.e:x;}),"편집 링크 재발급 · "+old.n); L[arg]=r2.link;
+      try{localStorage.setItem(LK,JSON.stringify(L));}catch(_){}
+      edBody(); edSay("‘"+old.n+"’ 새 링크를 만들었어요.","ok");
+    } else if(act==="revoke"){
+      var o=EDS.filter(function(x){return x.id===arg;})[0]; if(!o) return;
+      if(!confirm("‘"+o.n+"’의 편집 권한을 끌까요?")) return;
+      edSay("권한 끄는 중…");
+      await saveEditors(EDS.filter(function(x){return x.id!==arg;}),"편집자 제거 · "+o.n); delete L[arg];
+      try{localStorage.setItem(LK,JSON.stringify(L));}catch(_){}
+      edBody(); edSay("‘"+o.n+"’의 편집 권한을 껐어요.","ok");
+    }
+  }catch(err){edSay(err.message,"err");}
+}
+var SECF={bn:secBn,it:secIt,sh:secSh,inv:secInv,pr:secPr,ed:secEd};
 function edShell(){
   $("ed").innerHTML='<div class="ed-h"><h2>자료 편집</h2><button type="button" data-edx="close">닫기</button><button type="button" data-edx="revert">변경 취소</button><button type="button" class="pri" data-edx="save" id="edSave">GitHub에 저장</button><div class="ed-st" id="edSt"></div></div>'
-   +'<div class="ed-tabs" role="tablist">'+SECS.map(function(s){return '<button type="button" role="tab" data-es="'+s[0]+'" aria-selected="'+(ED.sec===s[0])+'">'+s[1]+'</button>';}).join("")+'</div>'
+   +'<div class="ed-tabs" role="tablist">'+SECS.concat(isAdmin()?[["ed","편집자 관리"]]:[]).map(function(s){return '<button type="button" role="tab" data-es="'+s[0]+'" aria-selected="'+(ED.sec===s[0])+'">'+s[1]+'</button>';}).join("")+'</div>'
    +'<div class="ed-b" id="edB"></div>'
-   +'<div class="ed-f"><span id="edTk"></span>'+(ls(TK)?'<button type="button" data-edx="token">토큰 변경</button>':'<button type="button" data-edx="name">이름 변경</button><button type="button" data-edx="forget">이 브라우저 편집 해제</button>')+'<button type="button" data-edx="backup">백업 다운로드</button><span class="sp">입력하면 왼쪽 화면에 바로 반영되고, 저장해야 다른 사람에게도 보입니다.</span></div>';
+   +'<div class="ed-f"><span id="edTk"></span>'+(ls(TK)?'<button type="button" data-edx="token">토큰 변경</button>':'<button type="button" data-edx="forget">이 브라우저 편집 해제</button>')+'<button type="button" data-edx="backup">백업 다운로드</button><span class="sp">입력하면 왼쪽 화면에 바로 반영되고, 저장해야 다른 사람에게도 보입니다.</span></div>';
   edBody(); edStatus(); if(ED.dirty) edSay("저장하지 않은 변경이 있습니다.");
 }
-function edBody(){$("edB").innerHTML=SECF[ED.sec](); $("edB").scrollTop=0;}
+function edBody(){if(ED.sec==="ed"&&!isAdmin()) ED.sec="bn"; $("edB").innerHTML=SECF[ED.sec](); $("edB").scrollTop=0;}
 function edSay(m,c){var e=$("edSt"); if(e){e.textContent=m||""; e.className="ed-st "+(c||"");}}
 function edStatus(){
-  var k=$("edTk"); if(k) k.textContent=(ls(TK)?"관리자 토큰으로 저장":(ls(KK)?"편집 링크로 연결됨":"편집 권한 없음"))+(ls(NK)?" · "+ls(NK):"");
+  var k=$("edTk"); if(k) k.textContent=isAdmin()?("관리자"+(ls(NK)?" · "+ls(NK):"")):(ME?"편집자 · "+ME.n:"편집 권한 없음");
   var s=$("edSave"); if(s) s.textContent=ED.dirty?"GitHub에 저장 ●":"GitHub에 저장";
   $("edBtn").textContent=ED.dirty?"편집 ●":"편집";
 }
@@ -1077,12 +1141,16 @@ async function fetchLatest(){
   try{var r=await ghApi("GET"); if(r.status===401&&ls(TK)){localStorage.removeItem(TK); r=await ghApi("GET");} if(!r.ok) return null; var j=await r.json(); return {sha:j.sha,data:JSON.parse(unb64(j.content))};}catch(_){return null;}
 }
 async function save(){
-  if(!(await getTok())){
-    if(ls(KK)){edSay("편집 링크가 더 이상 유효하지 않아요. 관리자에게 새 편집 링크를 받아 주세요.","err"); return;}
-    if(!askToken()) return;
+  if(!isAdmin()){
+    var tk0=await keyToken();
+    if(!tk0){ME=null; edSay("편집 권한이 없거나 해제됐어요. 관리자에게 편집 링크를 받아 주세요.","err"); return;}
+    try{var er=await fetch(EAPI+"?ref=main&_="+Date.now(),{headers:{"Accept":"application/vnd.github+json","Authorization":"Bearer "+tk0},cache:"no-store"});
+      var still=false; if(er.ok){var ej=JSON.parse(unb64((await er.json()).content)); still=(ej.editors||[]).some(function(x){return x.id===ME.id;});}
+      if(!still){EDS=EDS.filter(function(x){return x.id!==ME.id;}); ME=null; edSay("편집 권한이 해제됐어요. 관리자에게 문의해 주세요.","err"); return;}
+    }catch(_){edSay("권한 확인에 실패했어요. 잠시 후 다시 시도해 주세요.","err"); return;}
   }
-  var nm=ls(NK);
-  if(!nm){nm=prompt("이름을 입력해 주세요. 수정 기록에 남습니다.",""); if(nm===null){edSay("저장을 취소했어요."); return;} nm=nm.trim(); if(nm){try{localStorage.setItem(NK,nm);}catch(_){}}}
+  var nm=ME?ME.n:(ls(NK)||"");
+  if(isAdmin()&&!nm){nm=prompt("이름을 입력해 주세요. 수정 기록에 남습니다.",""); if(nm===null){edSay("저장을 취소했어요."); return;} nm=nm.trim(); if(nm){try{localStorage.setItem(NK,nm);}catch(_){}}}
   var btn=$("edSave"); btn.disabled=true; edSay("저장 중…");
   try{
     var r=await ghApi("GET"), cur=null;
@@ -1126,8 +1194,11 @@ $("ed").addEventListener("click",function(e){
   if(x==="close"){closeEd(); return;}
   if(x==="save"){save(); return;}
   if(x==="token"){askToken(); return;}
-  if(x==="name"){var nn=prompt("수정 기록에 남길 이름",ls(NK)||""); if(nn!==null){try{localStorage.setItem(NK,nn.trim());}catch(_){} edStatus();} return;}
-  if(x==="forget"){if(!confirm("이 브라우저에서 편집 권한을 지울까요? 다시 편집하려면 편집 링크로 들어오면 됩니다.")) return; try{localStorage.removeItem(KK); localStorage.removeItem(NK);}catch(_){} ED.dirty=false; closeEd(); render(); return;}
+  if(x==="addEditor"){edAdmin("add"); return;}
+  if(b.dataset.rekey){edAdmin("rekey",b.dataset.rekey); return;}
+  if(b.dataset.revoke){edAdmin("revoke",b.dataset.revoke); return;}
+  if(b.dataset.copy){var cv=b.dataset.copy; (navigator.clipboard?navigator.clipboard.writeText(cv):Promise.reject()).then(function(){edSay("링크를 복사했어요.","ok");},function(){var ip=b.closest(".ed-it").querySelector("input"); if(ip){ip.select();} edSay("링크를 선택했어요. Ctrl+C로 복사하세요.");}); return;}
+  if(x==="forget"){if(!confirm("이 브라우저에서 편집 권한을 지울까요? 다시 편집하려면 편집 링크로 들어오면 됩니다.")) return; try{localStorage.removeItem(KK);}catch(_){} ME=null; ED.dirty=false; closeEd(); render(); return;}
   if(x==="backup"){dl("ondash-data-"+todayS()+".json",JSON.stringify(DATA,null,1)); return;}
   if(x==="revert"){
     if(ED.dirty&&!confirm("저장하지 않은 변경을 모두 버릴까요?")) return;
@@ -1168,6 +1239,7 @@ document.addEventListener("click",function(e){
   var h=(location.hash||"").replace("#","");
   if(BODY[h]) state.tab=h;
   render();
+  loadEditors();
   var c=null; try{c=JSON.parse(localStorage.getItem(CK)||"null");}catch(_){}
   fetch("data.json?_="+Date.now(),{cache:"no-store"}).then(function(r){return r.ok?r.json():null;}).catch(function(){return null;}).then(function(d){
     var best=d; if(c&&c.data&&(!d||(c.data.updated||"")>(d.updated||""))) best=c.data;
