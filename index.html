@@ -268,6 +268,7 @@ details>.dbody{padding:2px 14px 14px; display:flex; flex-direction:column; gap:1
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important; animation:none!important}}
 /* ---------- editor ---------- */
+.edbtn[hidden]{display:none!important}
 .edbtn{font:inherit; font-size:12px; font-weight:700; border:1px solid var(--teal); background:var(--teal); color:#fff; padding:3px 12px; border-radius:2px; cursor:pointer}
 .edbtn:hover{filter:brightness(1.08)}
 body.editing .app{margin-right:min(760px,100vw)}
@@ -915,13 +916,26 @@ function render(){
   $("bnTx").innerHTML=rich(BN.text); $("asofTx").textContent=BN.asof||""; $("srcTx").textContent=BN.src||"";
   var ns=nextShip(), n=dd(ns.fatD);
   $("bnDd").textContent=ns.n+" FAT "+(n>0?"D-"+n:(n===0?"D-DAY":"진행 중"))+" · 출고 "+ns.win;
-  $("updTx").textContent=DATA.updated?("마지막 수정 "+fmtLocal(DATA.updated)):"";
+  $("updTx").textContent=DATA.updated?("마지막 수정 "+fmtLocal(DATA.updated)+(DATA.by?" · "+DATA.by:"")):"";
+  $("edBtn").hidden=!canEdit();
   $("edBtn").textContent=ED.dirty?"편집 ●":"편집";
 }
 function fmtLocal(iso){var d=new Date(iso); if(isNaN(d)) return ""; var p=function(x){return (x<10?"0":"")+x;}; return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes());}
 
 /* ---------- editor ---------- */
-var REPO="on-dashboard/on-dashboard.github.io", API="https://api.github.com/repos/"+REPO+"/contents/data.json", TK="ondash_gh_token", CK="ondash_cache";
+var REPO="on-dashboard/on-dashboard.github.io", API="https://api.github.com/repos/"+REPO+"/contents/data.json", TK="ondash_gh_token", CK="ondash_cache", KK="ondash_edit_key", NK="ondash_name";
+var EDK={iv:"s3E9OgEfZ1Tg1jVp",ct:"N/SAhb88s9OTOrTrKTDA5qlPWUBV3y10z6f56MMT3aBCnKUG+c2rz25oNgy8gdHxxWCUh0xaJMIb1Fi9fpW7Co1y/lbazUz4WjDC7tNCM5tjTvuNho1cmY5qE9oIl96x0sdOQJqZdikQ24iHHw=="}; /*EDK*/
+function ls(k){try{return localStorage.getItem(k);}catch(_){return null;}}
+function canEdit(){return !!(ls(TK)||(ls(KK)&&EDK));}
+function fromB64(s){var b=atob(s), u=new Uint8Array(b.length); for(var i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return u;}
+async function keyToken(){
+  var k=ls(KK); if(!k||!EDK) return null;
+  try{var raw=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(k));
+    var key=await crypto.subtle.importKey("raw",raw,"AES-GCM",false,["decrypt"]);
+    var pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:fromB64(EDK.iv)},key,fromB64(EDK.ct));
+    return new TextDecoder().decode(pt);}catch(_){return null;}
+}
+async function getTok(){return ls(TK)||await keyToken();}
 var ED={sec:"bn",dirty:false,sha:null,q:"",fs:"",fo:""};
 var KIND=[["good","초록 · 완료"],["mid","청록 · 진행"],["bad","빨강 · 위험"],["off","회색 · 대기"]];
 var STS=[["open","대기"],["prog","진행"],["risk","위험"],["done","완료"]];
@@ -1019,13 +1033,13 @@ function edShell(){
   $("ed").innerHTML='<div class="ed-h"><h2>자료 편집</h2><button type="button" data-edx="close">닫기</button><button type="button" data-edx="revert">변경 취소</button><button type="button" class="pri" data-edx="save" id="edSave">GitHub에 저장</button><div class="ed-st" id="edSt"></div></div>'
    +'<div class="ed-tabs" role="tablist">'+SECS.map(function(s){return '<button type="button" role="tab" data-es="'+s[0]+'" aria-selected="'+(ED.sec===s[0])+'">'+s[1]+'</button>';}).join("")+'</div>'
    +'<div class="ed-b" id="edB"></div>'
-   +'<div class="ed-f"><span id="edTk"></span><button type="button" data-edx="token">토큰 변경</button><button type="button" data-edx="backup">백업 다운로드</button><span class="sp">입력하면 왼쪽 화면에 바로 반영되고, 저장해야 다른 사람에게도 보입니다.</span></div>';
+   +'<div class="ed-f"><span id="edTk"></span>'+(ls(TK)?'<button type="button" data-edx="token">토큰 변경</button>':'<button type="button" data-edx="name">이름 변경</button><button type="button" data-edx="forget">이 브라우저 편집 해제</button>')+'<button type="button" data-edx="backup">백업 다운로드</button><span class="sp">입력하면 왼쪽 화면에 바로 반영되고, 저장해야 다른 사람에게도 보입니다.</span></div>';
   edBody(); edStatus(); if(ED.dirty) edSay("저장하지 않은 변경이 있습니다.");
 }
 function edBody(){$("edB").innerHTML=SECF[ED.sec](); $("edB").scrollTop=0;}
 function edSay(m,c){var e=$("edSt"); if(e){e.textContent=m||""; e.className="ed-st "+(c||"");}}
 function edStatus(){
-  var k=$("edTk"); if(k) k.textContent=localStorage.getItem(TK)?"GitHub 토큰: 이 브라우저에 저장됨":"GitHub 토큰: 없음 (저장할 때 입력)";
+  var k=$("edTk"); if(k) k.textContent=(ls(TK)?"관리자 토큰으로 저장":(ls(KK)?"편집 링크로 연결됨":"편집 권한 없음"))+(ls(NK)?" · "+ls(NK):"");
   var s=$("edSave"); if(s) s.textContent=ED.dirty?"GitHub에 저장 ●":"GitHub에 저장";
   $("edBtn").textContent=ED.dirty?"편집 ●":"편집";
 }
@@ -1050,28 +1064,33 @@ function onField(e){
 function dl(name,text){var a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([text],{type:"application/json"})); a.download=name; document.body.appendChild(a); a.click(); setTimeout(function(){URL.revokeObjectURL(a.href); a.remove();},500);}
 function b64(s){var u=new TextEncoder().encode(s), b=""; for(var i=0;i<u.length;i+=0x8000) b+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000)); return btoa(b);}
 function unb64(s){var b=atob(String(s).replace(/\s/g,"")), u=new Uint8Array(b.length); for(var i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return new TextDecoder().decode(u);}
-function ghApi(method,body){
-  var tk=localStorage.getItem(TK), h={"Accept":"application/vnd.github+json"};
+async function ghApi(method,body){
+  var tk=await getTok(), h={"Accept":"application/vnd.github+json"};
   if(tk) h.Authorization="Bearer "+tk; if(body) h["Content-Type"]="application/json";
-  return fetch(API+(method==="GET"?"?ref=main&_="+Date.now():""),{method:method,headers:h,body:body?JSON.stringify(body):undefined,cache:"no-store"});
+  return await fetch(API+(method==="GET"?"?ref=main&_="+Date.now():""),{method:method,headers:h,body:body?JSON.stringify(body):undefined,cache:"no-store"});
 }
 function askToken(){
   var t=prompt("GitHub 토큰을 붙여 넣으세요.\n이 브라우저에만 보관되고, ‘GitHub에 저장’을 누를 때만 GitHub로 전송됩니다.","");
   if(t&&t.trim()){localStorage.setItem(TK,t.trim()); edStatus(); return true;} return false;
 }
 async function fetchLatest(){
-  try{var r=await ghApi("GET"); if(r.status===401&&localStorage.getItem(TK)){localStorage.removeItem(TK); r=await ghApi("GET");} if(!r.ok) return null; var j=await r.json(); return {sha:j.sha,data:JSON.parse(unb64(j.content))};}catch(_){return null;}
+  try{var r=await ghApi("GET"); if(r.status===401&&ls(TK)){localStorage.removeItem(TK); r=await ghApi("GET");} if(!r.ok) return null; var j=await r.json(); return {sha:j.sha,data:JSON.parse(unb64(j.content))};}catch(_){return null;}
 }
 async function save(){
-  if(!localStorage.getItem(TK)&&!askToken()) return;
+  if(!(await getTok())){
+    if(ls(KK)){edSay("편집 링크가 더 이상 유효하지 않아요. 관리자에게 새 편집 링크를 받아 주세요.","err"); return;}
+    if(!askToken()) return;
+  }
+  var nm=ls(NK);
+  if(!nm){nm=prompt("이름을 입력해 주세요. 수정 기록에 남습니다.",""); if(nm===null){edSay("저장을 취소했어요."); return;} nm=nm.trim(); if(nm){try{localStorage.setItem(NK,nm);}catch(_){}}}
   var btn=$("edSave"); btn.disabled=true; edSay("저장 중…");
   try{
     var r=await ghApi("GET"), cur=null;
-    if(r.status===401){localStorage.removeItem(TK); edStatus(); edSay("토큰이 올바르지 않거나 만료됐어요. ‘토큰 변경’으로 다시 넣어 주세요.","err"); return;}
+    if(r.status===401){if(ls(TK)){localStorage.removeItem(TK); edSay("토큰이 올바르지 않거나 만료됐어요. ‘토큰 변경’으로 다시 넣어 주세요.","err");} else edSay("편집 권한이 만료됐어요. 관리자에게 새 편집 링크를 받아 주세요.","err"); edStatus(); return;}
     if(r.ok) cur=await r.json(); else if(r.status!==404){edSay("GitHub 확인 실패 ("+r.status+")","err"); return;}
     if(cur&&ED.sha&&cur.sha!==ED.sha&&!confirm("편집을 시작한 뒤 다른 곳에서 먼저 저장된 내용이 있습니다.\n지금 내용으로 덮어쓸까요?")){edSay("저장을 취소했어요."); return;}
-    DATA.updated=new Date().toISOString();
-    var body={message:"자료 수정 · "+fmtLocal(DATA.updated),content:b64(JSON.stringify(DATA,null,1)),branch:"main"}; if(cur) body.sha=cur.sha;
+    DATA.updated=new Date().toISOString(); DATA.by=nm||"";
+    var body={message:"자료 수정 · "+fmtLocal(DATA.updated)+(nm?" · "+nm:""),content:b64(JSON.stringify(DATA,null,1)),branch:"main"}; if(cur) body.sha=cur.sha;
     var w=await ghApi("PUT",body);
     if(!w.ok){edSay(w.status===401||w.status===403||w.status===404?"저장 권한이 없어요 ("+w.status+"). 토큰에 이 저장소의 Contents 읽기/쓰기 권한이 있는지 확인해 주세요.":"저장 실패 ("+w.status+")","err"); return;}
     var j=await w.json(); ED.sha=j.content.sha; ED.dirty=false;
@@ -1107,6 +1126,8 @@ $("ed").addEventListener("click",function(e){
   if(x==="close"){closeEd(); return;}
   if(x==="save"){save(); return;}
   if(x==="token"){askToken(); return;}
+  if(x==="name"){var nn=prompt("수정 기록에 남길 이름",ls(NK)||""); if(nn!==null){try{localStorage.setItem(NK,nn.trim());}catch(_){} edStatus();} return;}
+  if(x==="forget"){if(!confirm("이 브라우저에서 편집 권한을 지울까요? 다시 편집하려면 편집 링크로 들어오면 됩니다.")) return; try{localStorage.removeItem(KK); localStorage.removeItem(NK);}catch(_){} ED.dirty=false; closeEd(); render(); return;}
   if(x==="backup"){dl("ondash-data-"+todayS()+".json",JSON.stringify(DATA,null,1)); return;}
   if(x==="revert"){
     if(ED.dirty&&!confirm("저장하지 않은 변경을 모두 버릴까요?")) return;
@@ -1142,6 +1163,8 @@ document.addEventListener("click",function(e){
   else if(b.dataset.tr){state.tr=+b.dataset.tr; render();}
 });
 (function init(){
+  var hm=(location.hash||"").match(/(?:^#|&)edit=([^&]+)/);
+  if(hm){try{localStorage.setItem(KK,decodeURIComponent(hm[1]));}catch(_){} try{history.replaceState(null,"",location.pathname+location.search);}catch(_){}}
   var h=(location.hash||"").replace("#","");
   if(BODY[h]) state.tab=h;
   render();
